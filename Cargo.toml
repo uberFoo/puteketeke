@@ -1,9 +1,15 @@
 [package]
-name = "uberfoo-async"
-version = "0.1.0"
+name = "puteketeke"
+version = "0.0.1"
+authors = ["Keith T. Star <uberfoo@me.com>"]
+categories = ["asynchronous"]
+description = "An asynchronous runtime built on smol."
+include = ["src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
+keywords = ["interpreter", "async", "non-blocking", "futures"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/uberfoo/puteketeke"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 async-executor = "1.6.0"
