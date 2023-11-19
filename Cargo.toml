@@ -1,0 +1,23 @@
+[package]
+name = "uberfoo-async"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-executor = "1.6.0"
+async-io = "2.2.0"
+crossbeam = "0.8.2"
+futures-lite = "2.0.1"
+once_cell = "1.18.0"
+parking_lot = "0.12.1"
+slab = "0.4.9"
+threadpool = "1.8.1"
+tracing = "0.1.40"
+
+[dev-dependencies]
+futures = "0.3.29"
+rand = "0.8.5"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
