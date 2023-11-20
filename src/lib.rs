@@ -1,4 +1,4 @@
-//! # uberFoo Executor
+//! # Async Executor
 //!
 //! This crate is what you might build if you were to add a thread pool to smol, and wanted paused tasks.
 //!
