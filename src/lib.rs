@@ -8,7 +8,7 @@
 //!
 //! ```
 //! // Create an executor with four threads.
-//! # use uberfoo_async::{AsyncTask, Executor};
+//! # use puteketeke::{AsyncTask, Executor};
 //! # use futures_lite::future;
 //! let executor = Executor::new(4);
 //!
@@ -16,6 +16,7 @@
 //!     .create_task(async { println!("Hello world") })
 //!     .unwrap();
 //!
+//! // Note that we need to start the task, otherwise it will never run.
 //! executor.start_task(&task);
 //! future::block_on(task);
 //! ````
@@ -23,8 +24,11 @@
 //! ## Random
 //!
 //! This crate takes something like the opposite approach to Tokio.
+//! (I assume, I've never actually used Tokio.)
 //! Tokio assumes that you want all of your code to be async, whereas we do not.
 //! We take the approach that most of the main code is synchronous, with async code as needed.
+//!
+//! Probably not the fastest executor, but that's not precisely it's goal.
 //!
 //! ## Timers
 //! For reasons that I have yet to ascertain, timers only work properly on one executor.
@@ -56,26 +60,6 @@
 //!
 //! I also plan to see what I can do about sending `&Worker`s around, rather than owned copies.
 //!
-//! ```ignore
-//! // Create an executor with four threads.
-//! # use uberfoo_async::{AsyncTask, Executor};
-//! # use futures_lite::future;
-//! let executor = Executor::new(4);
-//! let future = async {
-//!    println!("Hello, world!");
-//! };
-//!
-//! let worker_id = executor.get_root_worker_id();
-//! let worker = executor.get_worker(worker_id).unwrap();
-//! let task = AsyncTask::new(worker, future);
-//!
-//! // Equivalently
-//! // let task = executor.create_task(future).unwrap();
-//!
-//! executor.start_task(&task);
-//! future::block_on(task);
-//! ````
-
 use std::{
     future::Future,
     marker::PhantomData,
@@ -135,12 +119,20 @@ impl<'a> ExecutorLock<'a> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Worker {
     Executor(Executor),
     Worker(Executor, usize),
 }
 
 impl Worker {
+    pub fn destroy(self) {
+        match self {
+            Self::Executor(_) => {}
+            Self::Worker(executor, key) => executor.remove_worker(key),
+        }
+    }
+
     pub fn create_task<T>(
         &self,
         future: impl Future<Output = T> + Send + 'static,
@@ -190,6 +182,10 @@ impl Executor {
 
     pub fn start_task<T>(&self, task: &AsyncTask<T>) {
         GlobalExecutor::start_task(*self.0, task);
+    }
+
+    pub fn worker_count(&self) -> usize {
+        GlobalExecutor::worker_count(*self.0)
     }
 
     pub fn remove_worker(&self, index: usize) {
@@ -329,7 +325,16 @@ impl GlobalExecutor {
         }
     }
 
-    pub fn root_worker(key: usize) -> usize {
+    fn worker_count(key: usize) -> usize {
+        let this = unsafe { EXECUTOR.get().unwrap() };
+        if let Some(executor) = this.get(key) {
+            executor.0.worker_count()
+        } else {
+            panic!("global executor not initialized");
+        }
+    }
+
+    fn root_worker(key: usize) -> usize {
         let this = unsafe { EXECUTOR.get().unwrap() };
         if let Some(executor) = this.get(key) {
             executor.0.root_worker()
@@ -366,6 +371,10 @@ impl<'a> UberExecutor<'a> {
             sender: Some(worker_send),
             receiver: worker_recv,
         }
+    }
+
+    fn worker_count(&self) -> usize {
+        self.workers.lock().len()
     }
 
     fn worker_at_index(&'a self, index: usize) -> Option<AsyncWorker<'a>> {
@@ -661,6 +670,7 @@ mod tests {
 
     #[test]
     fn test_executor() {
+        color_backtrace::install();
         let executor = Executor::new(1);
 
         let task = executor
@@ -678,6 +688,7 @@ mod tests {
 
     #[test]
     fn test_timer() {
+        color_backtrace::install();
         let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
@@ -699,6 +710,7 @@ mod tests {
 
     #[test]
     fn race() {
+        color_backtrace::install();
         let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
@@ -732,8 +744,9 @@ mod tests {
     #[test]
     fn stress_test_timer_workers() {
         start_logger();
+        color_backtrace::install();
 
-        let executor = Executor::new(50);
+        let executor = Executor::new(25);
 
         let mut tasks = Vec::new();
         let mut sum = 0;
@@ -742,6 +755,7 @@ mod tests {
             let sleep_millis = rand::random::<u64>() % 100;
             sum += sleep_millis;
             let inner_executor = executor.clone();
+            let inner_worker = worker.clone();
             let task = worker
                 .create_task(async move {
                     let now = Instant::now();
@@ -751,11 +765,13 @@ mod tests {
 
                     let elapsed = now.elapsed();
                     let delta = elapsed - Duration::from_millis(sleep_millis);
+
                     println!("sleep: {sleep_millis:?}");
                     println!("elapsed: {elapsed:?}");
                     println!("delta: {delta:?}");
-                    // println!("duration: {duration:?}");
-                    // assert!(delta.subsec_millis() < 5);
+
+                    assert!(delta.subsec_millis() < 2);
+                    inner_worker.destroy();
                 })
                 .unwrap();
             executor.start_task(&task);
@@ -770,5 +786,8 @@ mod tests {
         future::block_on(futures::future::join_all(tasks));
         let duration = now.elapsed();
         println!("duration: {duration:?}, sum: {sum}");
+
+        // Account for the root worker.
+        assert_eq!(1, executor.worker_count());
     }
 }

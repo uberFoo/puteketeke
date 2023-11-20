@@ -23,6 +23,7 @@ threadpool = "1.8.1"
 tracing = "0.1.40"
 
 [dev-dependencies]
+color-backtrace = "0.6.1"
 futures = "0.3.29"
 rand = "0.8.5"
 tracing = "0.1.40"
