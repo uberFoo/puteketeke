@@ -133,6 +133,19 @@ impl Worker {
         }
     }
 
+    pub fn spawn_task<T>(
+        &self,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        match self {
+            Self::Executor(executor) => executor.spawn_task(future),
+            Self::Worker(executor, key) => executor.spawn_task_on_worker(*key, future),
+        }
+    }
+
     pub fn create_task<T>(
         &self,
         future: impl Future<Output = T> + Send + 'static,
@@ -153,6 +166,27 @@ pub struct Executor(Arc<usize>);
 impl Executor {
     pub fn new(thread_count: usize) -> Self {
         Self(Arc::new(GlobalExecutor::new_executor(thread_count)))
+    }
+
+    pub fn spawn_task<T>(
+        &self,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        GlobalExecutor::spawn_task(*self.0, future)
+    }
+
+    pub fn spawn_task_on_worker<T>(
+        &self,
+        key: usize,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        GlobalExecutor::spawn_task_on_worker(*self.0, key, future)
     }
 
     pub fn create_task<T>(
@@ -242,6 +276,45 @@ impl GlobalExecutor {
         let _guard = ExecutorLock::lock();
         if let Some(global) = unsafe { EXECUTOR.get_mut() } {
             global.try_remove(key);
+        } else {
+            panic!("global executor not initialized");
+        }
+    }
+
+    fn spawn_task<T>(
+        executor_key: usize,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        if let Some(this) = unsafe { EXECUTOR.get_mut() } {
+            if let Some(executor) = this.get_mut(executor_key) {
+                let executor = &mut executor.0;
+                executor.spawn_task(future)
+            } else {
+                None
+            }
+        } else {
+            panic!("global executor not initialized");
+        }
+    }
+
+    fn spawn_task_on_worker<T>(
+        executor_key: usize,
+        key: usize,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        if let Some(this) = unsafe { EXECUTOR.get_mut() } {
+            if let Some(executor) = this.get_mut(executor_key) {
+                let executor = &mut executor.0;
+                executor.spawn_task_on_worker(key, future)
+            } else {
+                None
+            }
         } else {
             panic!("global executor not initialized");
         }
@@ -399,6 +472,29 @@ impl<'a> UberExecutor<'a> {
         idx
     }
 
+    fn spawn_task<T>(
+        &'a self,
+        future: impl Future<Output = T> + Send + 'a,
+    ) -> Option<AsyncTask<'a, T>>
+    where
+        T: Send + std::fmt::Debug + 'a,
+    {
+        self.spawn_task_on_worker(self.root, future)
+    }
+
+    fn spawn_task_on_worker<T>(
+        &'a self,
+        key: usize,
+        future: impl Future<Output = T> + Send + 'a,
+    ) -> Option<AsyncTask<'a, T>>
+    where
+        T: Send + std::fmt::Debug + 'a,
+    {
+        let task = self.create_task_on_worker(key, future)?;
+        self.start_task(&task);
+        Some(task)
+    }
+
     fn start_task<T>(&self, task: &AsyncTask<T>) {
         task.start();
         // We get the worker in this roundabout manner to avoid capturing a
@@ -414,10 +510,6 @@ impl<'a> UberExecutor<'a> {
     async fn timer(&'a self, duration: Duration) -> Instant {
         // We need to put all of the timers on the same worker so that they
         // interact properly.
-        // dbg!(self.root_worker());
-        // dbg!(self.worker_at_index(self.root_worker()).unwrap());
-        // let timer = Timer::after(duration);
-        // dbg!(timer);
         let task = AsyncTask::new(
             self.worker_at_index(self.root_worker()).unwrap(),
             Timer::after(duration),
@@ -427,7 +519,7 @@ impl<'a> UberExecutor<'a> {
     }
 
     fn create_task<T>(
-        &'a mut self,
+        &'a self,
         future: impl Future<Output = T> + Send + 'a,
     ) -> Option<AsyncTask<'a, T>>
     where
@@ -437,7 +529,7 @@ impl<'a> UberExecutor<'a> {
     }
 
     fn create_task_on_worker<T>(
-        &'a mut self,
+        &'a self,
         key: usize,
         future: impl Future<Output = T> + Send + 'a,
     ) -> Option<AsyncTask<'a, T>>
@@ -632,6 +724,7 @@ where
 mod tests {
     use super::*;
 
+    use async_compat::Compat;
     use futures_lite::future;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -774,6 +867,8 @@ mod tests {
                     inner_worker.destroy();
                 })
                 .unwrap();
+            // 🚧 Why do we need this second start here, in addition to the one
+            // below? I mean, without it the timers are serial, but why?
             executor.start_task(&task);
             tasks.push(task);
         }
@@ -789,5 +884,39 @@ mod tests {
 
         // Account for the root worker.
         assert_eq!(1, executor.worker_count());
+    }
+
+    #[test]
+    fn reqwest() {
+        let executor = Executor::new(1);
+
+        let future = Compat::new(async {
+            let body = reqwest::get("https://www.rust-lang.org")
+                .await?
+                .text()
+                .await?;
+
+            println!("body = {:?}", body);
+            Ok::<(), reqwest::Error>(())
+        });
+
+        let task = executor.spawn_task(future).unwrap();
+        let _ = future::block_on(task);
+    }
+
+    #[test]
+    fn warp() {
+        use warp::Filter;
+
+        let executor = Executor::new(1);
+
+        let future = Compat::new(async {
+            let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
+
+            warp::serve(hello).run(([127, 0, 0, 1], 3030)).await;
+        });
+
+        let task = executor.spawn_task(future).unwrap();
+        let _ = future::block_on(task);
     }
 }
