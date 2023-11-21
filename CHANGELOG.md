@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a [Reqwest](https://github.com/seanmonstar/reqwest) test
 - Added a [Warp](https://github.com/seanmonstar/warp) example
 - Added a silly benchmark I noticed on Reddit to examples
+- Updated README
 
 ## [0.0.1] - 2023-11-19
 
