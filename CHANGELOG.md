@@ -24,6 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release of crate. Basic functionality is there, it just needs some
   documentation ond fine tuning of the API.
 
-[unreleased]: https://github.com/olivierlacan/keep-a-changelog/compare/v1.1.1...HEAD
-[0.0.2]: https://github.com/olivierlacan/keep-a-changelog/compare/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/olivierlacan/keep-a-changelog/releases/tag/v0.0.1
+[unreleased]: https://github.com/uberfoo/puteketeke/compare/v0.0.1...HEAD
+<!-- [0.0.2]: https://github.com/olivierlacan/keep-a-changelog/compare/v0.0.1...v0.0.2 -->
+[0.0.1]: https://github.com/uberFoo/puteketeke/releases/tag/v0.0.1
