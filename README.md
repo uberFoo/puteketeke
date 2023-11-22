@@ -1,3 +1,7 @@
+![Build Status](https://github.com/uberFoo/puteketeke/workflows/rust/badge.svg)
+[![codecov](https://codecov.io/gh/uberFoo/puteketeke/graph/badge.svg?token=eCmOPZzxX5)](https://codecov.io/gh/uberFoo/puteketeke)
+![Lines of Code](https://tokei.rs/b1/github/uberfoo/puteketeke)
+
 # Pūteketeke: Rust Async Runtime
 
 This crate takes [smol](https://github.com/smol-rs/smol) and builds upon it to provide a more intuitive and complete runtime for async Rust programs.
