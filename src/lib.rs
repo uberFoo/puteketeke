@@ -200,16 +200,6 @@ impl Worker {
         }
     }
 
-    /// Return the key for the worker
-    ///
-    /// This is the index into the executor's worker list.
-    pub fn key(&self) -> usize {
-        match self {
-            Self::Executor(_) => 0,
-            Self::Worker(_, key) => *key,
-        }
-    }
-
     /// Spawn a task on the worker
     ///
     /// This is a convenience function that creates a task on the worker, and
@@ -1024,6 +1014,28 @@ mod tests {
     fn remove_root_worker() {
         let executor = Executor::new(1);
         let worker = executor.root_worker();
+        worker.destroy();
+        assert_eq!(1, executor.worker_count());
+    }
+
+    #[test]
+    fn worker() {
+        let executor = Executor::new(1);
+        let worker = executor.new_worker();
+
+        let task0 = worker
+            .spawn_task(async {
+                println!("Hello, world!");
+            })
+            .unwrap();
+
+        let task1 = worker.create_task(async { 42 }).unwrap();
+
+        worker.start_task(&task1);
+
+        let _ = future::block_on(task0);
+        let _ = future::block_on(task1);
+
         worker.destroy();
         assert_eq!(1, executor.worker_count());
     }
