@@ -1,6 +1,6 @@
 use async_compat::Compat;
 use futures_lite::future;
-use puteketeke::{AsyncTask, Executor};
+use puteketeke::Executor;
 
 fn main() {
     use warp::Filter;
@@ -16,5 +16,5 @@ fn main() {
     println!("Listening on http://localhost:3030/hello/you");
 
     let task = executor.spawn_task(future).unwrap();
-    let _ = future::block_on(task);
+    future::block_on(task);
 }

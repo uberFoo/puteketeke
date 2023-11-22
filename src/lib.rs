@@ -123,7 +123,6 @@ use once_cell::sync::OnceCell;
 use parking_lot::{Mutex, MutexGuard};
 use slab::Slab;
 use threadpool::ThreadPool;
-use tracing;
 
 static mut GLOBAL_LOCK: OnceCell<Mutex<()>> = OnceCell::new();
 static mut EXECUTOR: OnceCell<Slab<GlobalExecutor>> = OnceCell::new();
@@ -356,7 +355,7 @@ impl Executor {
     /// Root worker
     ///
     /// This returns the root worker on the executor.
-    fn root_worker(&self) -> Worker {
+    pub fn root_worker(&self) -> Worker {
         Worker::Executor(self.clone())
     }
 }
@@ -567,11 +566,7 @@ impl<'a> UberExecutor<'a> {
 
     fn worker_at_index(&'a self, index: usize) -> Option<AsyncWorker<'a>> {
         let guard = self.workers.lock();
-        if let Some(worker) = guard.get(index) {
-            Some(worker.clone())
-        } else {
-            None
-        }
+        guard.get(index).cloned()
     }
 
     fn root_worker(&'a self) -> usize {
@@ -650,11 +645,8 @@ impl<'a> UberExecutor<'a> {
     where
         T: Send + std::fmt::Debug + 'a,
     {
-        if let Some(worker) = self.worker_at_index(key) {
-            Some(AsyncTask::new(worker, future))
-        } else {
-            None
-        }
+        self.worker_at_index(key)
+            .map(|worker| AsyncTask::new(worker, future))
     }
 
     fn start(&self, thread_count: usize) {
@@ -669,26 +661,18 @@ impl<'a> UberExecutor<'a> {
 
             self.pool.execute(move || {
                 let _enter = span.enter();
-                loop {
-                    match receiver.recv().ok() {
-                        Some(worker) => {
-                            tracing::trace!("Executor::run: worker found");
-                            tracing::trace!("Executor::run: worker: {worker:?}");
-                            match worker.try_tick() {
-                                true => {
-                                    tracing::trace!("Executor::run: worker ticked");
-                                    tracing::trace!("Executor::run: worker: {worker:?}");
-                                }
-                                false => {
-                                    tracing::trace!("Executor::run: tick failed");
-                                    tracing::trace!("Executor::run: worker: {worker:?}");
-                                }
-                            }
-                            tracing::debug!("Executor::run: worker finished");
-                            tracing::trace!("Executor::run: thread: {:?}", thread::current().id());
+                while let Ok(worker) = receiver.recv() {
+                    tracing::trace!("Executor::run: worker found");
+                    tracing::trace!("Executor::run: worker: {worker:?}");
+                    match worker.try_tick() {
+                        true => {
+                            tracing::trace!("Executor::run: worker ticked");
                         }
-                        None => break,
-                    };
+                        false => {
+                            tracing::trace!("Executor::run: tick failed");
+                        }
+                    }
+                    tracing::debug!("Executor::run: worker finished");
                 }
             });
         }
@@ -1007,7 +991,7 @@ mod tests {
 
         let now = Instant::now();
         for task in &tasks {
-            executor.start_task(&task);
+            executor.start_task(task);
         }
 
         future::block_on(futures::future::join_all(tasks));
