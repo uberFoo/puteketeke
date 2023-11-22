@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'puteketeke'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=puteketeke"
+                ],
+                "filter": {
+                    "name": "puteketeke",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preRunCommands": [
+                "script lldb.debugger.HandleCommand('settings set target.source-map /rustc/{} \"{}/lib/rustlib/src/rust\"'.format(os.popen('rustc --version --verbose').read().split('commit-hash: ')[1].split('\\n')[0].strip(), os.popen('rustc --print sysroot').readline().strip()))"
+            ],
+        }
+    ]
+}

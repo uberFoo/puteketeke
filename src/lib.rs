@@ -1,14 +1,19 @@
-//! # uberFoo Executor
+//! # Async Executor
 //!
-//! This crate is what you might build if you were to add a thread pool to smol, and wanted paused tasks.
+//! This crate is what you might build if you were to add a thread pool to [smol](https://github.com/smol-rs/smol), and wanted paused tasks.
 //!
-//! uberFoo Executor is a simple executor built on top of [smol](https://github.com/smol-rs/smol).
-//! It's main purpose is to provide an ergonomic API for adding async support to interpreters and virtual machines.
-//! Here's a hello world:
+//! I take somewhat the opposite approach to Tokio.
+//! (I assume, I've never actually used Tokio.)
+//! I believe that Tokio assumes that you want all of your code to be async, whereas I do not.
+//!
+//! I take the approach that most of the main code is synchronous, with async code as needed.
+//! This is exactly the situation I found myself in when I wanted to add async support to my language, [dwarf](https://github.com/uberFoo/dwarf).
+//!
+//! ## Hello Worild
 //!
 //! ```
 //! // Create an executor with four threads.
-//! # use uberfoo_async::{AsyncTask, Executor};
+//! # use puteketeke::{AsyncTask, Executor};
 //! # use futures_lite::future;
 //! let executor = Executor::new(4);
 //!
@@ -16,18 +21,57 @@
 //!     .create_task(async { println!("Hello world") })
 //!     .unwrap();
 //!
+//! // Note that we need to start the task, otherwise it will never run.
 //! executor.start_task(&task);
 //! future::block_on(task);
 //! ````
 //!
-//! ## Random
+//! ## Motivation
 //!
-//! This crate takes something like the opposite approach to Tokio.
-//! Tokio assumes that you want all of your code to be async, whereas we do not.
-//! We take the approach that most of the main code is synchronous, with async code as needed.
+//! Primarily this crate is intended to be used by those that wish to have some async in their code, and don't want to commit fully.
+//! This crate does not require wrapping main in 'async fn`, and it's really pretty simple.
+//! The features of note are:
 //!
-//! ## Timers
-//! For reasons that I have yet to ascertain, timers only work properly on one executor.
+//! - an RAII executor, backed by a threadpool, that cleans up after itself when dropped
+//! - a task that starts paused, and is freely passed around as a value
+//! - the ability to create isolated workers upon which tasks are executed
+//! - an ergonomic and simple API
+//! - parallel timers
+//!
+//! Practically speaking, the greatest need that I had in dwarf, besides an executor, was the ability to enqueue a paused task, and pass it around.
+//! It's not really too difficult to explain why either.
+//! Consider this dwarf code:
+//!
+//! ```ignore
+//! async fn main() -> Future<()> {
+//!     let future = async {
+//!         print(42);
+//!     };
+//!     print("The answer to life the universe and everything is: ");
+//!     future.await;
+//! }
+//! ```
+//!
+//! As you might guess, this prints "The answer to life the universe and everything is: 42".
+//!
+//! The interpreter is processing statements and expressions.
+//! When the block expression:
+//!
+//! ```ignore
+//! async {
+//!     print(42);
+//! }
+//! ```
+//!
+//! is processed, we don't want the future to start executing yet, otherwise the sentence would be wrong.
+//!
+//! What we need is to hold on to that future and only start it when it is awaited, after the print expression.
+//! Furthermore, we need to be able to pass that future around the interpreter as we process the subsequent statements and expressions.
+//!
+//! ## Notes
+//!
+//! ### Timers
+//! For reasons that we have yet to ascertain specifically, timers only work properly on one executor.
 //! What is apparently happening is that `Timer::after(n)` is remembering the maximal `n` across workers.
 //! This causes all timers to fire at the max of the current value or the previous maximum.
 //!
@@ -38,44 +82,26 @@
 //! Based on empirical testing, there is a non-linear relationship between the timer / thread ratio and the timer error.
 //! When timers == threads the error is 0.
 //! As the number of concurrent timers increases the error in the duration increases.
+//! I plan on working out exactly what is happening, and what I can do about it.
 //!
-//! Given a bit of thought, this is not surprising.
-//! In the `stress_test_timer_workers` unit test, we start a number of concurrent timers.
-//! When the first timer is polled it will be Pending.
+//! ### The Future
 //!
-//!
-//!
-//! ## The Future
-//!
-//! I fully intend to add priorities to tasks.
+//! ~~I fully intend to add priorities to tasks.
 //! I have in fact begun work, but it's stalled on some sticky ownership issues.
-//! I may in fact end up taking another approach to the one that I''ve begun.
-//! In any case, felt that it was better to publish what I have now, and then iterate on it.
+//! I may in fact end up taking another approach to the one that I've begun.
+//! In any case, felt that it was better to publish what I have now, and then iterate on it.~~
 //!
-//! I'd like to sort out the issue that is requiring the use of a static global.
+//! Been there.
 //!
-//! I also plan to see what I can do about sending `&Worker`s around, rather than owned copies.
+//! Done that.
 //!
-//! ```ignore
-//! // Create an executor with four threads.
-//! # use uberfoo_async::{AsyncTask, Executor};
-//! # use futures_lite::future;
-//! let executor = Executor::new(4);
-//! let future = async {
-//!    println!("Hello, world!");
-//! };
+//! Got the t-shirt.
 //!
-//! let worker_id = executor.get_root_worker_id();
-//! let worker = executor.get_worker(worker_id).unwrap();
-//! let task = AsyncTask::new(worker, future);
+//! It was sort of neat to make happen, but the tasks are dispatched too quickly to make a difference.
 //!
-//! // Equivalently
-//! // let task = executor.create_task(future).unwrap();
+//! I plan to see what I can do about sending `&Worker`s around, rather than owned copies.
 //!
-//! executor.start_task(&task);
-//! future::block_on(task);
-//! ````
-
+#![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 use std::{
     future::Future,
     marker::PhantomData,
@@ -135,12 +161,76 @@ impl<'a> ExecutorLock<'a> {
     }
 }
 
+/// Worker Abstraction
+///
+/// A Worker is what you are given in response to [`Executor::new_worker`] and
+/// [`Executor::root_worker`] functions. It's small, it Clones, and it's all
+/// you need to spawn tasks, and destroy Workers.
+#[derive(Clone, Debug)]
 pub enum Worker {
+    /// A lone executor
+    ///
+    /// An executor is able to perform all of the tasks expected by a worker,
+    /// so it's a valid worker.
     Executor(Executor),
+    /// A special made worker
+    ///
+    /// This worker combines an executor, along with an index to a worker.
     Worker(Executor, usize),
 }
 
 impl Worker {
+    /// Spawn a timer on the worker
+    ///
+    /// This is a convenience function that creates a timer on the worker.
+    pub async fn timer(&self, duration: Duration) -> Instant {
+        match self {
+            Self::Executor(executor) => executor.timer(duration).await,
+            Self::Worker(executor, _) => executor.timer(duration).await,
+        }
+    }
+
+    /// Destroy the worker
+    ///
+    /// This invalidates the worker, as well as removing the underlying [`AsyncWorker`]
+    /// from the executor.
+    pub fn destroy(self) {
+        match self {
+            Self::Executor(_) => {}
+            Self::Worker(executor, key) => executor.remove_worker(key),
+        }
+    }
+
+    /// Return the key for the worker
+    ///
+    /// This is the index into the executor's worker list.
+    pub fn key(&self) -> usize {
+        match self {
+            Self::Executor(_) => 0,
+            Self::Worker(_, key) => *key,
+        }
+    }
+
+    /// Spawn a task on the worker
+    ///
+    /// This is a convenience function that creates a task on the worker, and
+    /// then starts the task running.
+    pub fn spawn_task<T>(
+        &self,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        match self {
+            Self::Executor(executor) => executor.spawn_task(future),
+            Self::Worker(executor, key) => executor.spawn_task_on_worker(*key, future),
+        }
+    }
+
+    /// Create a task on the worker
+    ///
+    /// This is a convenience function that creates a task on the worker.
     pub fn create_task<T>(
         &self,
         future: impl Future<Output = T> + Send + 'static,
@@ -153,16 +243,62 @@ impl Worker {
             Self::Worker(executor, key) => executor.create_task_on_worker(*key, future),
         }
     }
+
+    /// Start a task on the worker
+    ///
+    /// This is a convenience function that starts a task on the worker.
+    pub fn start_task<T>(&self, task: &AsyncTask<'_, T>) {
+        match self {
+            Self::Executor(executor) => executor.start_task(task),
+            Self::Worker(executor, _) => executor.start_task(task),
+        }
+    }
 }
 
+/// Rust async executor
+///
+/// This is the main interface to the runtime, besides the [`Worker`] struct.
+/// What isn't covered by that struct is covered here.
+///
+///
 #[derive(Clone, Debug)]
 pub struct Executor(Arc<usize>);
 
 impl Executor {
+    /// Create a new executor
+    ///
+    /// This creates a new executor with the specified number of threads.
     pub fn new(thread_count: usize) -> Self {
         Self(Arc::new(GlobalExecutor::new_executor(thread_count)))
     }
 
+    /// Spawn a task on the executor
+    ///
+    /// Create a new task on the main worker and start it running.
+    pub fn spawn_task<T>(
+        &self,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        GlobalExecutor::spawn_task(*self.0, future)
+    }
+
+    fn spawn_task_on_worker<T>(
+        &self,
+        key: usize,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        GlobalExecutor::spawn_task_on_worker(*self.0, key, future)
+    }
+
+    /// Create a task on the executor
+    ///
+    /// Create a task on the main worker
     pub fn create_task<T>(
         &self,
         future: impl Future<Output = T> + Send + 'static,
@@ -173,7 +309,7 @@ impl Executor {
         GlobalExecutor::create_task(*self.0, future)
     }
 
-    pub fn create_task_on_worker<T>(
+    fn create_task_on_worker<T>(
         &self,
         key: usize,
         future: impl Future<Output = T> + Send + 'static,
@@ -184,26 +320,44 @@ impl Executor {
         GlobalExecutor::create_task_on_worker(*self.0, key, future)
     }
 
+    /// Pause execution for the specified duration
+    ///
+    /// This starts a timer on the root worker.
     pub fn timer(&self, duration: Duration) -> impl Future<Output = Instant> {
         GlobalExecutor::timer(*self.0, duration)
     }
 
-    pub fn start_task<T>(&self, task: &AsyncTask<T>) {
+    /// Start a paused task
+    ///
+    /// This starts a paused task on the executor.
+    pub fn start_task<T>(&self, task: &AsyncTask<'_, T>) {
         GlobalExecutor::start_task(*self.0, task);
     }
 
-    pub fn remove_worker(&self, index: usize) {
+    /// Worker cardinality
+    ///
+    /// This returns the number of workers on the executor.
+    pub fn worker_count(&self) -> usize {
+        GlobalExecutor::worker_count(*self.0)
+    }
+
+    fn remove_worker(&self, index: usize) {
         GlobalExecutor::remove_worker(*self.0, index);
     }
 
+    /// Create a new worker
+    ///
+    /// This creates a new worker on the executor.
     pub fn new_worker(&self) -> Worker {
         let key = GlobalExecutor::new_worker(*self.0);
         Worker::Worker(self.clone(), key)
     }
 
-    pub fn root_worker(&self) -> Worker {
-        let key = GlobalExecutor::root_worker(*self.0);
-        Worker::Worker(self.clone(), key)
+    /// Root worker
+    ///
+    /// This returns the root worker on the executor.
+    fn root_worker(&self) -> Worker {
+        Worker::Executor(self.clone())
     }
 }
 
@@ -246,6 +400,45 @@ impl GlobalExecutor {
         let _guard = ExecutorLock::lock();
         if let Some(global) = unsafe { EXECUTOR.get_mut() } {
             global.try_remove(key);
+        } else {
+            panic!("global executor not initialized");
+        }
+    }
+
+    fn spawn_task<T>(
+        executor_key: usize,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        if let Some(this) = unsafe { EXECUTOR.get_mut() } {
+            if let Some(executor) = this.get_mut(executor_key) {
+                let executor = &mut executor.0;
+                executor.spawn_task(future)
+            } else {
+                None
+            }
+        } else {
+            panic!("global executor not initialized");
+        }
+    }
+
+    fn spawn_task_on_worker<T>(
+        executor_key: usize,
+        key: usize,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Option<AsyncTask<'static, T>>
+    where
+        T: Send + std::fmt::Debug + 'static,
+    {
+        if let Some(this) = unsafe { EXECUTOR.get_mut() } {
+            if let Some(executor) = this.get_mut(executor_key) {
+                let executor = &mut executor.0;
+                executor.spawn_task_on_worker(key, future)
+            } else {
+                None
+            }
         } else {
             panic!("global executor not initialized");
         }
@@ -302,7 +495,7 @@ impl GlobalExecutor {
         }
     }
 
-    fn start_task<T>(key: usize, task: &AsyncTask<T>) {
+    fn start_task<T>(key: usize, task: &AsyncTask<'_, T>) {
         let this = unsafe { EXECUTOR.get().unwrap() };
         if let Some(executor) = this.get(key) {
             executor.0.start_task(task);
@@ -329,10 +522,10 @@ impl GlobalExecutor {
         }
     }
 
-    pub fn root_worker(key: usize) -> usize {
+    fn worker_count(key: usize) -> usize {
         let this = unsafe { EXECUTOR.get().unwrap() };
         if let Some(executor) = this.get(key) {
-            executor.0.root_worker()
+            executor.0.worker_count()
         } else {
             panic!("global executor not initialized");
         }
@@ -368,6 +561,10 @@ impl<'a> UberExecutor<'a> {
         }
     }
 
+    fn worker_count(&self) -> usize {
+        self.workers.lock().len()
+    }
+
     fn worker_at_index(&'a self, index: usize) -> Option<AsyncWorker<'a>> {
         let guard = self.workers.lock();
         if let Some(worker) = guard.get(index) {
@@ -386,11 +583,33 @@ impl<'a> UberExecutor<'a> {
         let entry = guard.vacant_entry();
         let idx = entry.key();
         entry.insert(AsyncWorker::new(idx));
-        // dbg!(idx);
         idx
     }
 
-    fn start_task<T>(&self, task: &AsyncTask<T>) {
+    fn spawn_task<T>(
+        &'a self,
+        future: impl Future<Output = T> + Send + 'a,
+    ) -> Option<AsyncTask<'a, T>>
+    where
+        T: Send + std::fmt::Debug + 'a,
+    {
+        self.spawn_task_on_worker(self.root, future)
+    }
+
+    fn spawn_task_on_worker<T>(
+        &'a self,
+        key: usize,
+        future: impl Future<Output = T> + Send + 'a,
+    ) -> Option<AsyncTask<'a, T>>
+    where
+        T: Send + std::fmt::Debug + 'a,
+    {
+        let task = self.create_task_on_worker(key, future)?;
+        self.start_task(&task);
+        Some(task)
+    }
+
+    fn start_task<T>(&self, task: &AsyncTask<'_, T>) {
         task.start();
         // We get the worker in this roundabout manner to avoid capturing a
         // reference to the task which causes "data escapes the function" errors.
@@ -405,10 +624,6 @@ impl<'a> UberExecutor<'a> {
     async fn timer(&'a self, duration: Duration) -> Instant {
         // We need to put all of the timers on the same worker so that they
         // interact properly.
-        // dbg!(self.root_worker());
-        // dbg!(self.worker_at_index(self.root_worker()).unwrap());
-        // let timer = Timer::after(duration);
-        // dbg!(timer);
         let task = AsyncTask::new(
             self.worker_at_index(self.root_worker()).unwrap(),
             Timer::after(duration),
@@ -418,7 +633,7 @@ impl<'a> UberExecutor<'a> {
     }
 
     fn create_task<T>(
-        &'a mut self,
+        &'a self,
         future: impl Future<Output = T> + Send + 'a,
     ) -> Option<AsyncTask<'a, T>>
     where
@@ -428,7 +643,7 @@ impl<'a> UberExecutor<'a> {
     }
 
     fn create_task_on_worker<T>(
-        &'a mut self,
+        &'a self,
         key: usize,
         future: impl Future<Output = T> + Send + 'a,
     ) -> Option<AsyncTask<'a, T>>
@@ -492,10 +707,14 @@ impl Drop for UberExecutor<'_> {
     }
 }
 
+/// Asynchronous task worker
+///
+/// This struct is just a wrapper around a [`SmolExecutor`] and it's methods.
+///
 #[derive(Clone, Debug)]
 pub struct AsyncWorker<'a> {
     id: usize,
-    pub ex: Arc<SmolExecutor<'a>>,
+    ex: Arc<SmolExecutor<'a>>,
 }
 
 impl<'a> AsyncWorker<'a> {
@@ -536,6 +755,20 @@ impl<'a> AsyncWorker<'a> {
     }
 }
 
+/// An asynchronous task that starts in a quiescent state
+///
+/// This is a wrapper around a [`SmolTask`], which is a wrapper around a [`Future`].
+/// The innovation is that when we create this task it actually wraps the user's
+/// future in another. There is an atomic bool trigger to set it all in motion.
+/// Once the trigger is popped, the wrapping future runs and spawns the user's
+/// future onto the executor.
+///
+/// ```
+/// # use puteketeke::{AsyncTask, Executor};
+/// # let executor = Executor::new(1);
+/// let task = executor.create_task(async { 42 }).unwrap();
+/// println!("task id: {:?}", task.id());
+/// ````
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct AsyncTask<'a, T> {
@@ -547,10 +780,7 @@ pub struct AsyncTask<'a, T> {
 }
 
 impl<'a, T> AsyncTask<'a, T> {
-    pub fn new(
-        worker: AsyncWorker<'a>,
-        future: impl Future<Output = T> + Send + 'a,
-    ) -> AsyncTask<'a, T>
+    fn new(worker: AsyncWorker<'a>, future: impl Future<Output = T> + Send + 'a) -> AsyncTask<'a, T>
     where
         T: Send + std::fmt::Debug + 'a,
     {
@@ -581,11 +811,13 @@ impl<'a, T> AsyncTask<'a, T> {
         }
     }
 
+    /// Return the task id
+    ///
     pub fn id(&self) -> usize {
         self.id
     }
 
-    pub fn start(&self) {
+    fn start(&self) {
         if !self.started.load(Ordering::SeqCst) {
             tracing::trace!(target: "async", "AsyncTask::start: {}", self.id);
             self.started.store(true, Ordering::SeqCst);
@@ -623,6 +855,7 @@ where
 mod tests {
     use super::*;
 
+    use async_compat::Compat;
     use futures_lite::future;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -661,6 +894,7 @@ mod tests {
 
     #[test]
     fn test_executor() {
+        color_backtrace::install();
         let executor = Executor::new(1);
 
         let task = executor
@@ -678,6 +912,7 @@ mod tests {
 
     #[test]
     fn test_timer() {
+        color_backtrace::install();
         let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
@@ -699,6 +934,7 @@ mod tests {
 
     #[test]
     fn race() {
+        color_backtrace::install();
         let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
@@ -732,8 +968,11 @@ mod tests {
     #[test]
     fn stress_test_timer_workers() {
         start_logger();
+        color_backtrace::install();
 
-        let executor = Executor::new(50);
+        // You need a significant fraction of the workers as threads.
+        // This may be a bug.
+        let executor = Executor::new(25);
 
         let mut tasks = Vec::new();
         let mut sum = 0;
@@ -741,23 +980,27 @@ mod tests {
             let worker = executor.new_worker();
             let sleep_millis = rand::random::<u64>() % 100;
             sum += sleep_millis;
-            let inner_executor = executor.clone();
+            let inner_worker = worker.clone();
             let task = worker
                 .create_task(async move {
                     let now = Instant::now();
-                    inner_executor
+                    inner_worker
                         .timer(Duration::from_millis(sleep_millis))
                         .await;
+                    println!("sleep: {sleep_millis:?}");
 
                     let elapsed = now.elapsed();
-                    let delta = elapsed - Duration::from_millis(sleep_millis);
-                    println!("sleep: {sleep_millis:?}");
                     println!("elapsed: {elapsed:?}");
+
+                    let delta = elapsed - Duration::from_millis(sleep_millis);
                     println!("delta: {delta:?}");
-                    // println!("duration: {duration:?}");
-                    // assert!(delta.subsec_millis() < 5);
+
+                    assert!(delta.subsec_millis() < 3);
+                    inner_worker.destroy();
                 })
                 .unwrap();
+            // 🚧 Why do we need this second start here, in addition to the one
+            // below? I mean, without it the timers are serial, but why?
             executor.start_task(&task);
             tasks.push(task);
         }
@@ -770,5 +1013,34 @@ mod tests {
         future::block_on(futures::future::join_all(tasks));
         let duration = now.elapsed();
         println!("duration: {duration:?}, sum: {sum}");
+
+        // Account for the root worker.
+        assert_eq!(1, executor.worker_count());
+    }
+
+    #[test]
+    fn reqwest() {
+        let executor = Executor::new(1);
+
+        let future = Compat::new(async {
+            let body = reqwest::get("https://www.rust-lang.org")
+                .await?
+                .text()
+                .await?;
+
+            println!("body = {:?}", body);
+            Ok::<(), reqwest::Error>(())
+        });
+
+        let task = executor.spawn_task(future).unwrap();
+        let _ = future::block_on(task);
+    }
+
+    #[test]
+    fn remove_root_worker() {
+        let executor = Executor::new(1);
+        let worker = executor.root_worker();
+        worker.destroy();
+        assert_eq!(1, executor.worker_count());
     }
 }

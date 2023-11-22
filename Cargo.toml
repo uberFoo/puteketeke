@@ -1,11 +1,11 @@
 [package]
 name = "puteketeke"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Keith T. Star <uberfoo@me.com>"]
 categories = ["asynchronous"]
 description = "An asynchronous runtime built on smol."
 include = ["src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
-keywords = ["interpreter", "async", "non-blocking", "futures"]
+keywords = ["executor", "async", "non-blocking", "futures"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/uberfoo/puteketeke"
@@ -23,7 +23,11 @@ threadpool = "1.8.1"
 tracing = "0.1.40"
 
 [dev-dependencies]
+async-compat = "0.2.3"
+color-backtrace = "0.6.1"
 futures = "0.3.29"
 rand = "0.8.5"
+reqwest = "0.11.22"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+warp = "0.3.6"
