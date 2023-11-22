@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Better documentation.
 - Better Worker API.
+- spawn_task API
 - Cleaned up private bits to keep them that way.
 - Added a [Reqwest](https://github.com/seanmonstar/reqwest) test
 - Added a [Warp](https://github.com/seanmonstar/warp) example

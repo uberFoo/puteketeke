@@ -3,22 +3,25 @@
 This crate takes [smol](https://github.com/smol-rs/smol) and builds upon it to provide a more intuitive and complete runtime for async Rust programs.
 This is what you might end up with if you started with smol, added a threadpool and made the API easier to use.
 
-Here's
+Here's a hello world program.
 
 ```rust
 // Create an executor with four threads.
 use puteketeke::{AsyncTask, Executor};
 use futures_lite::future;
- let executor = Executor::new(4);
 
- let task = executor
-     .create_task(async { println!("Hello world") })
-     .unwrap();
+let executor = Executor::new(4);
 
- // Note that we need to start the task, otherwise it will never run.
- executor.start_task(&task);
- future::block_on(task);
+let task = executor
+    .create_task(async { println!("Hello world") })
+    .unwrap();
+
+// Note that we need to start the task, otherwise it will never run.
+executor.start_task(&task);
+future::block_on(task);
  ```
+
+ Check out the [documentation](https://docs.rs/puteketeke/0.0.1/puteketeke/) for usage information.
 
 ## Purpose — or; do we need another runtime?
 
@@ -68,10 +71,7 @@ is processed, we don't want the future to start executing yet, otherwise the sen
 So we need to hold on to that future and only start it when it is awaited, after the print expression.
 Furthermore, we need to be able to pass that future around the interpreter as we process the next statement.
 
-
-
-
- ## License
+## License
 
 Pūteketeke is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
 
