@@ -1,4 +1,4 @@
-![Build Status](https://github.com/uberFoo/puteketeke/workflows/rust/badge.svg)
+![Build Status](https://github.com/uberFoo/puteketeke/workflows/Rust/badge.svg)
 [![codecov](https://codecov.io/gh/uberFoo/puteketeke/graph/badge.svg?token=eCmOPZzxX5)](https://codecov.io/gh/uberFoo/puteketeke)
 ![Lines of Code](https://tokei.rs/b1/github/uberfoo/puteketeke)
 
