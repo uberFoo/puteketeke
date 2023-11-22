@@ -21,7 +21,7 @@ executor.start_task(&task);
 future::block_on(task);
  ```
 
- Check out the [documentation](https://docs.rs/puteketeke/0.0.1/puteketeke/) for usage information.
+ Check out the [documentation](https://docs.rs/puteketeke/latest/puteketeke/index.html) for usage information.
 
 ## Purpose — or; do we need another runtime?
 
