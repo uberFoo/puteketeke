@@ -1,8 +1,8 @@
 [package]
 name = "puteketeke"
-version = "0.0.1"
+version = "0.0.3"
 authors = ["Keith T. Star <uberfoo@me.com>"]
-categories = ["asynchronous"]
+categories = ["asynchronous", "concurrency"]
 description = "An asynchronous runtime built on smol."
 include = ["src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 keywords = ["executor", "async", "non-blocking", "futures"]

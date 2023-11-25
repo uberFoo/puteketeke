@@ -600,9 +600,10 @@ impl<'a> UberExecutor<'a> {
         // reference to the task which causes "data escapes the function" errors.
         let worker_id = task.worker.id();
         let guard = self.workers.lock();
-        let worker = guard.get(worker_id).unwrap();
-        if let Some(sender) = &self.sender {
-            let _ = sender.send(worker.clone());
+        if let Some(worker) = guard.get(worker_id) {
+            if let Some(sender) = &self.sender {
+                let _ = sender.send(worker.clone());
+            }
         }
     }
 
@@ -635,8 +636,11 @@ impl<'a> UberExecutor<'a> {
     where
         T: Send + std::fmt::Debug + 'a,
     {
-        self.worker_at_index(key)
-            .map(|worker| AsyncTask::new(worker, future))
+        self.worker_at_index(key).map(|worker| {
+            let task = AsyncTask::new(worker, future);
+            tracing::debug!(target: "async", "create_task: {task:?}");
+            task
+        })
     }
 
     fn start(&self, thread_count: usize) {
@@ -907,19 +911,39 @@ mod tests {
     }
 
     #[test]
-    fn race() {
+    fn test_two_timer() {
         color_backtrace::install();
         let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
-        let task_1 = executor
+        let task_0 = executor
             .create_task(async move {
-                for _ in 0..96 {
-                    inner_executor.timer(Duration::from_millis(1)).await;
-                }
-                96
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(500)).await;
+                now.elapsed()
             })
             .unwrap();
+
+        let inner_executor = executor.clone();
+        let task_1 = executor
+            .create_task(async move {
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(100)).await;
+                now.elapsed()
+            })
+            .unwrap();
+
+        executor.start_task(&task_0);
+        executor.start_task(&task_1);
+
+        let (a, b) = future::block_on(future::zip(task_0, task_1));
+        assert!(b < a);
+    }
+
+    #[test]
+    fn race() {
+        color_backtrace::install();
+        let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
         let task_0 = executor
@@ -928,6 +952,16 @@ mod tests {
                     inner_executor.timer(Duration::from_millis(1)).await;
                 }
                 42
+            })
+            .unwrap();
+
+        let inner_executor = executor.clone();
+        let task_1 = executor
+            .create_task(async move {
+                for _ in 0..96 {
+                    inner_executor.timer(Duration::from_millis(1)).await;
+                }
+                96
             })
             .unwrap();
 
