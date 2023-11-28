@@ -1,6 +1,10 @@
 //! # Async Executor
 //!
-//! This crate is what you might build if you were to add a thread pool to [smol](https://github.com/smol-rs/smol), and wanted paused tasks.
+//! ![Build Status](https://github.com/uberFoo/puteketeke/workflows/Rust/badge.svg)
+//! [![codecov](https://codecov.io/gh/uberFoo/puteketeke/graph/badge.svg?token=eCmOPZzxX5)](https://codecov.io/gh/uberFoo/puteketeke)
+//! ![Lines of Code](https://tokei.rs/b1/github/uberfoo/puteketeke)
+//!
+//! This crate is what you might build if you were to add a thread pool to [smol](https://github.com/smol-rs/smol), and tasks to start paused.
 //!
 //! I take somewhat the opposite approach to Tokio.
 //! (I assume, I've never actually used Tokio.)
@@ -9,7 +13,7 @@
 //! I take the approach that most of the main code is synchronous, with async code as needed.
 //! This is exactly the situation I found myself in when I wanted to add async support to my language, [dwarf](https://github.com/uberFoo/dwarf).
 //!
-//! ## Hello Worild
+//! ## Hello World
 //!
 //! ```
 //! // Create an executor with four threads.
@@ -938,6 +942,30 @@ mod tests {
 
         let (a, b) = future::block_on(future::zip(task_0, task_1));
         assert!(b < a);
+
+        let inner_executor = executor.clone();
+        let task_2 = executor
+            .create_task(async move {
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(100)).await;
+                now.elapsed()
+            })
+            .unwrap();
+
+        let inner_executor = executor.clone();
+        let task_3 = executor
+            .create_task(async move {
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(500)).await;
+                now.elapsed()
+            })
+            .unwrap();
+
+        executor.start_task(&task_2);
+        executor.start_task(&task_3);
+
+        let (c, d) = future::block_on(future::zip(task_2, task_3));
+        assert!(c < d);
     }
 
     #[test]
@@ -1067,8 +1095,8 @@ mod tests {
 
         worker.start_task(&task1);
 
-        let _ = future::block_on(task0);
-        let _ = future::block_on(task1);
+        future::block_on(task0);
+        future::block_on(task1);
 
         worker.destroy();
         assert_eq!(1, executor.worker_count());
