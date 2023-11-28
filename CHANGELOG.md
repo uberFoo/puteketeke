@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2023-11-28
+
+### Added
+
+- code coverage
+- additional tests
+
+### Changed
+
+- made Executor::root_worker public
+
+### Fixed
+
+- clippy lints
+- readme link to documentation
+
+### Removed
+
+- Worker::key method
+
 ## [0.0.2] - 2023-11-22
 
 ### Added
@@ -27,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release of crate. Basic functionality is there, it just needs some
   documentation ond fine tuning of the API.
 
-[unreleased]: https://github.com/uberfoo/puteketeke/compare/v0.0.1...develop
+[unreleased]: https://github.com/uberfoo/puteketeke/compare/v0.0.3...develop
+[0.0.3]: https://github.com/uberfoo/puteketeke/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/uberfoo/puteketeke/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/uberFoo/puteketeke/releases/tag/v0.0.1

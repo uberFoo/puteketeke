@@ -1,3 +1,5 @@
+//! From https://gist.github.com/miquels/8576d1394d3b26c6811f4fc1e7886a1c
+//! and https://www.reddit.com/r/rust/comments/lg0a7b/benchmarking_tokio_tasks_and_goroutines/
 use std::{
     fs::File,
     io::{Read, Write},
@@ -20,12 +22,12 @@ fn main() {
                         {
                             // task::block_in_place(move || {
                             let mut dev_urandom = File::open("/dev/urandom").unwrap();
-                            dev_urandom.read(&mut buffer).unwrap();
+                            dev_urandom.read_exact(&mut buffer).unwrap();
                             // });
                         }
                         // task::block_in_place(move || {
                         let mut dev_null = File::create("/dev/null").unwrap();
-                        dev_null.write(&mut buffer).unwrap();
+                        dev_null.write_all(&buffer).unwrap();
                         // });
                     })
                     .unwrap()
@@ -54,5 +56,5 @@ fn main() {
     };
 
     let task = executor.spawn_task(main).unwrap();
-    let _ = future::block_on(task);
+    future::block_on(task);
 }

@@ -1,6 +1,10 @@
 //! # Async Executor
 //!
-//! This crate is what you might build if you were to add a thread pool to [smol](https://github.com/smol-rs/smol), and wanted paused tasks.
+//! ![Build Status](https://github.com/uberFoo/puteketeke/workflows/Rust/badge.svg)
+//! [![codecov](https://codecov.io/gh/uberFoo/puteketeke/graph/badge.svg?token=eCmOPZzxX5)](https://codecov.io/gh/uberFoo/puteketeke)
+//! ![Lines of Code](https://tokei.rs/b1/github/uberfoo/puteketeke)
+//!
+//! This crate is what you might build if you were to add a thread pool to [smol](https://github.com/smol-rs/smol), and tasks to start paused.
 //!
 //! I take somewhat the opposite approach to Tokio.
 //! (I assume, I've never actually used Tokio.)
@@ -9,7 +13,7 @@
 //! I take the approach that most of the main code is synchronous, with async code as needed.
 //! This is exactly the situation I found myself in when I wanted to add async support to my language, [dwarf](https://github.com/uberFoo/dwarf).
 //!
-//! ## Hello Worild
+//! ## Hello World
 //!
 //! ```
 //! // Create an executor with four threads.
@@ -123,7 +127,6 @@ use once_cell::sync::OnceCell;
 use parking_lot::{Mutex, MutexGuard};
 use slab::Slab;
 use threadpool::ThreadPool;
-use tracing;
 
 static mut GLOBAL_LOCK: OnceCell<Mutex<()>> = OnceCell::new();
 static mut EXECUTOR: OnceCell<Slab<GlobalExecutor>> = OnceCell::new();
@@ -198,16 +201,6 @@ impl Worker {
         match self {
             Self::Executor(_) => {}
             Self::Worker(executor, key) => executor.remove_worker(key),
-        }
-    }
-
-    /// Return the key for the worker
-    ///
-    /// This is the index into the executor's worker list.
-    pub fn key(&self) -> usize {
-        match self {
-            Self::Executor(_) => 0,
-            Self::Worker(_, key) => *key,
         }
     }
 
@@ -356,7 +349,7 @@ impl Executor {
     /// Root worker
     ///
     /// This returns the root worker on the executor.
-    fn root_worker(&self) -> Worker {
+    pub fn root_worker(&self) -> Worker {
         Worker::Executor(self.clone())
     }
 }
@@ -567,11 +560,7 @@ impl<'a> UberExecutor<'a> {
 
     fn worker_at_index(&'a self, index: usize) -> Option<AsyncWorker<'a>> {
         let guard = self.workers.lock();
-        if let Some(worker) = guard.get(index) {
-            Some(worker.clone())
-        } else {
-            None
-        }
+        guard.get(index).cloned()
     }
 
     fn root_worker(&'a self) -> usize {
@@ -615,9 +604,10 @@ impl<'a> UberExecutor<'a> {
         // reference to the task which causes "data escapes the function" errors.
         let worker_id = task.worker.id();
         let guard = self.workers.lock();
-        let worker = guard.get(worker_id).unwrap();
-        if let Some(sender) = &self.sender {
-            let _ = sender.send(worker.clone());
+        if let Some(worker) = guard.get(worker_id) {
+            if let Some(sender) = &self.sender {
+                let _ = sender.send(worker.clone());
+            }
         }
     }
 
@@ -650,11 +640,11 @@ impl<'a> UberExecutor<'a> {
     where
         T: Send + std::fmt::Debug + 'a,
     {
-        if let Some(worker) = self.worker_at_index(key) {
-            Some(AsyncTask::new(worker, future))
-        } else {
-            None
-        }
+        self.worker_at_index(key).map(|worker| {
+            let task = AsyncTask::new(worker, future);
+            tracing::debug!(target: "async", "create_task: {task:?}");
+            task
+        })
     }
 
     fn start(&self, thread_count: usize) {
@@ -669,26 +659,18 @@ impl<'a> UberExecutor<'a> {
 
             self.pool.execute(move || {
                 let _enter = span.enter();
-                loop {
-                    match receiver.recv().ok() {
-                        Some(worker) => {
-                            tracing::trace!("Executor::run: worker found");
-                            tracing::trace!("Executor::run: worker: {worker:?}");
-                            match worker.try_tick() {
-                                true => {
-                                    tracing::trace!("Executor::run: worker ticked");
-                                    tracing::trace!("Executor::run: worker: {worker:?}");
-                                }
-                                false => {
-                                    tracing::trace!("Executor::run: tick failed");
-                                    tracing::trace!("Executor::run: worker: {worker:?}");
-                                }
-                            }
-                            tracing::debug!("Executor::run: worker finished");
-                            tracing::trace!("Executor::run: thread: {:?}", thread::current().id());
+                while let Ok(worker) = receiver.recv() {
+                    tracing::trace!("Executor::run: worker found");
+                    tracing::trace!("Executor::run: worker: {worker:?}");
+                    match worker.try_tick() {
+                        true => {
+                            tracing::trace!("Executor::run: worker ticked");
                         }
-                        None => break,
-                    };
+                        false => {
+                            tracing::trace!("Executor::run: tick failed");
+                        }
+                    }
+                    tracing::debug!("Executor::run: worker finished");
                 }
             });
         }
@@ -933,19 +915,63 @@ mod tests {
     }
 
     #[test]
-    fn race() {
+    fn test_two_timer() {
         color_backtrace::install();
         let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
-        let task_1 = executor
+        let task_0 = executor
             .create_task(async move {
-                for _ in 0..96 {
-                    inner_executor.timer(Duration::from_millis(1)).await;
-                }
-                96
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(500)).await;
+                now.elapsed()
             })
             .unwrap();
+
+        let inner_executor = executor.clone();
+        let task_1 = executor
+            .create_task(async move {
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(100)).await;
+                now.elapsed()
+            })
+            .unwrap();
+
+        executor.start_task(&task_0);
+        executor.start_task(&task_1);
+
+        let (a, b) = future::block_on(future::zip(task_0, task_1));
+        assert!(b < a);
+
+        let inner_executor = executor.clone();
+        let task_2 = executor
+            .create_task(async move {
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(100)).await;
+                now.elapsed()
+            })
+            .unwrap();
+
+        let inner_executor = executor.clone();
+        let task_3 = executor
+            .create_task(async move {
+                let now = Instant::now();
+                inner_executor.timer(Duration::from_millis(500)).await;
+                now.elapsed()
+            })
+            .unwrap();
+
+        executor.start_task(&task_2);
+        executor.start_task(&task_3);
+
+        let (c, d) = future::block_on(future::zip(task_2, task_3));
+        assert!(c < d);
+    }
+
+    #[test]
+    fn race() {
+        color_backtrace::install();
+        let executor = Executor::new(1);
 
         let inner_executor = executor.clone();
         let task_0 = executor
@@ -954,6 +980,16 @@ mod tests {
                     inner_executor.timer(Duration::from_millis(1)).await;
                 }
                 42
+            })
+            .unwrap();
+
+        let inner_executor = executor.clone();
+        let task_1 = executor
+            .create_task(async move {
+                for _ in 0..96 {
+                    inner_executor.timer(Duration::from_millis(1)).await;
+                }
+                96
             })
             .unwrap();
 
@@ -1007,7 +1043,7 @@ mod tests {
 
         let now = Instant::now();
         for task in &tasks {
-            executor.start_task(&task);
+            executor.start_task(task);
         }
 
         future::block_on(futures::future::join_all(tasks));
@@ -1040,6 +1076,28 @@ mod tests {
     fn remove_root_worker() {
         let executor = Executor::new(1);
         let worker = executor.root_worker();
+        worker.destroy();
+        assert_eq!(1, executor.worker_count());
+    }
+
+    #[test]
+    fn worker() {
+        let executor = Executor::new(1);
+        let worker = executor.new_worker();
+
+        let task0 = worker
+            .spawn_task(async {
+                println!("Hello, world!");
+            })
+            .unwrap();
+
+        let task1 = worker.create_task(async { 42 }).unwrap();
+
+        worker.start_task(&task1);
+
+        future::block_on(task0);
+        future::block_on(task1);
+
         worker.destroy();
         assert_eq!(1, executor.worker_count());
     }
