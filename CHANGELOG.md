@@ -11,12 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - update workflow for manual initiation
 
+### Changed
+
+- Minor logging tweaks.
+
+### Fixed
+
+- There was a bug in the threading code where `worker.try_tick()` was only being called once, instead of in a loop. This resulted in spawned tasks only executing a single tick concurrently, before the `await` code ran it to completion.
+
 ## [0.0.3] - 2023-11-28
 
 ### Added
 
 - code coverage
 - additional tests
+- new category to Cargo.toml
 
 ### Changed
 

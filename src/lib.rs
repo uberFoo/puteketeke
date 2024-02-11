@@ -660,17 +660,35 @@ impl<'a> UberExecutor<'a> {
             self.pool.execute(move || {
                 let _enter = span.enter();
                 while let Ok(worker) = receiver.recv() {
-                    tracing::trace!("Executor::run: worker found");
-                    tracing::trace!("Executor::run: worker: {worker:?}");
-                    match worker.try_tick() {
-                        true => {
-                            tracing::trace!("Executor::run: worker ticked");
-                        }
-                        false => {
-                            tracing::trace!("Executor::run: tick failed");
+                    tracing::trace!(
+                        target = "async",
+                        "Executor::run: worker found: {}",
+                        worker.id
+                    );
+                    loop {
+                        match worker.try_tick() {
+                            true => {
+                                tracing::trace!(
+                                    target = "async",
+                                    "Executor::run: worker ticked: {}",
+                                    worker.id
+                                );
+                            }
+                            false => {
+                                tracing::trace!(
+                                    target = "async",
+                                    "Executor::run: tick failed: {} ",
+                                    worker.id
+                                );
+                                break;
+                            }
                         }
                     }
-                    tracing::debug!("Executor::run: worker finished");
+                    tracing::debug!(
+                        target = "async",
+                        "Executor::run: worker finished: {}",
+                        worker.id
+                    );
                 }
             });
         }
@@ -774,14 +792,15 @@ impl<'a, T> AsyncTask<'a, T> {
         // is how many simultaneous tasks are we likely to have, because that's the size
         // of the upper word.
         let id = unsafe { TASK_COUNT.fetch_add(1, Ordering::SeqCst) };
-        tracing::trace!("AsyncTask::new: {id}");
+        tracing::trace!(target: "async", "AsyncTask::new: {id}");
 
         // spawn a task that spawns a task 🌈
         let inner = worker.clone();
         let future = async move {
-            tracing::trace!("AsyncTask::future: spawn inner task: {id}");
-
-            inner.spawn(future).await
+            tracing::trace!(target: "async", "AsyncTask spawning task: {id}");
+            let result = inner.spawn(future).await;
+            tracing::trace!(target: "async", "AsyncTask finished task: {id}");
+            result
         };
 
         Self {
@@ -818,15 +837,15 @@ where
 
     #[tracing::instrument(level = "trace", target = "async")]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!("AsyncTask::poll {:?}", self);
+        tracing::trace!(target = "async", "AsyncTask::poll {:?}", self);
         let this = std::pin::Pin::into_inner(self);
 
         if this.started.load(Ordering::SeqCst) {
-            tracing::trace!("AsyncTask::poll: ready: {}", this.id,);
+            tracing::trace!(target = "async", "AsyncTask::poll: ready: {}", this.id,);
             let task = this.inner.take().unwrap();
             Poll::Ready(future::block_on(this.worker.resolve_task(task)))
         } else {
-            tracing::trace!("AsyncTask::poll: pending: {}", this.id,);
+            tracing::trace!(target = "async", "AsyncTask::poll: pending: {}", this.id,);
             this.waker = Some(cx.waker().clone());
             Poll::Pending
         }
