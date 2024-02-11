@@ -1,6 +1,6 @@
 [package]
 name = "puteketeke"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Keith T. Star <uberfoo@me.com>"]
 categories = ["asynchronous", "concurrency", "compilers"]
 description = "An asynchronous runtime built on smol."
