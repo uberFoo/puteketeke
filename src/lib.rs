@@ -661,23 +661,26 @@ impl<'a> UberExecutor<'a> {
                 let _enter = span.enter();
                 while let Ok(worker) = receiver.recv() {
                     tracing::trace!(
-                        target = "async",
-                        "Executor::run: worker found: {}",
+                        target: "async",
+                        "Executor::run: worker {} found.",
                         worker.id
                     );
+
                     loop {
+                        tracing::trace!(target: "async", "tick {:?}", thread::current().id());
                         match worker.try_tick() {
                             true => {
+                                tracing::trace!(target: "async", "tock {:?}", thread::current().id());
                                 tracing::trace!(
-                                    target = "async",
-                                    "Executor::run: worker ticked: {}",
+                                    target: "async",
+                                    "Executor::run: worker {} ticked.",
                                     worker.id
                                 );
                             }
                             false => {
                                 tracing::trace!(
-                                    target = "async",
-                                    "Executor::run: tick failed: {} ",
+                                    target: "async",
+                                    "Executor::run: worker {} tick failed.",
                                     worker.id
                                 );
                                 break;
@@ -685,7 +688,7 @@ impl<'a> UberExecutor<'a> {
                         }
                     }
                     tracing::debug!(
-                        target = "async",
+                        target: "async",
                         "Executor::run: worker finished: {}",
                         worker.id
                     );
@@ -734,7 +737,7 @@ impl<'a> AsyncWorker<'a> {
     where
         T: Send + 'a,
     {
-        tracing::debug!(target: "async", "spawn executor: {:?}", self);
+        tracing::debug!(target: "async", "AsyncWorker {} spawn", self.id);
         self.ex.spawn(future)
     }
 
@@ -742,15 +745,13 @@ impl<'a> AsyncWorker<'a> {
     where
         T: std::fmt::Debug,
     {
-        tracing::debug!(target: "async", "ChaChaExecutor: resolve_task: {self:?}");
-        tracing::debug!(target: "async", "ChaChaExecutor: resolve_task: task: {task:?}");
         let result = self.ex.run(task).await;
-        tracing::debug!(target: "async", "ChaChaExecutor: resolve_task: {self:?}, RESOLVED: {result:?}");
+        tracing::debug!(target: "async", "AsyncWorker {} resolve_task: RESOLVED: {result:?}", self.id);
         result
     }
 
     fn try_tick(&self) -> bool {
-        tracing::debug!(target: "async", "try_tick: {:?}", self);
+        tracing::debug!(target: "async", "AsyncWorker {} try_tick", self.id);
         self.ex.try_tick()
     }
 }
@@ -797,9 +798,9 @@ impl<'a, T> AsyncTask<'a, T> {
         // spawn a task that spawns a task 🌈
         let inner = worker.clone();
         let future = async move {
-            tracing::trace!(target: "async", "AsyncTask spawning task: {id}");
+            tracing::trace!(target: "async", "AsyncTask spawning inner task {id} on worker {}", inner.id);
             let result = inner.spawn(future).await;
-            tracing::trace!(target: "async", "AsyncTask finished task: {id}");
+            tracing::trace!(target: "async", "AsyncTask finished inner task {id} on worker {}", inner.id);
             result
         };
 
@@ -837,15 +838,15 @@ where
 
     #[tracing::instrument(level = "trace", target = "async")]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!(target = "async", "AsyncTask::poll {:?}", self);
+        tracing::trace!(target: "async", "AsyncTask::poll {:?}", self);
         let this = std::pin::Pin::into_inner(self);
 
         if this.started.load(Ordering::SeqCst) {
-            tracing::trace!(target = "async", "AsyncTask::poll: ready: {}", this.id,);
+            tracing::trace!(target: "async", "AsyncTask::poll: ready: {}", this.id,);
             let task = this.inner.take().unwrap();
             Poll::Ready(future::block_on(this.worker.resolve_task(task)))
         } else {
-            tracing::trace!(target = "async", "AsyncTask::poll: pending: {}", this.id,);
+            tracing::trace!(target: "async", "AsyncTask::poll: pending: {}", this.id,);
             this.waker = Some(cx.waker().clone());
             Poll::Pending
         }
